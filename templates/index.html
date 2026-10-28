@@ -1,0 +1,122 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Next-Day Demand Forecast</title>
+  <style>
+    :root { color-scheme: light; --ink:#172b4d; --muted:#65758b; --line:#d9e2ec; --blue:#1769aa; --pale:#f3f7fb; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--pale); color:var(--ink); font-family:Segoe UI, Arial, sans-serif; }
+    main { width:min(100% - 32px, 760px); margin:52px auto; }
+    .card { background:white; border:1px solid var(--line); border-radius:18px; padding:34px; box-shadow:0 14px 35px #203b5b12; }
+    .eyebrow { color:var(--blue); font-size:12px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+    h1 { margin:8px 0 8px; font-size:clamp(26px, 5vw, 36px); letter-spacing:-.03em; }
+    .intro { margin:0 0 28px; color:var(--muted); line-height:1.55; }
+    form { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+    .field { display:flex; flex-direction:column; gap:8px; }
+    .wide { grid-column:1 / -1; }
+    label, legend { font-size:14px; font-weight:650; }
+    input[type=date], input[type=number] { width:100%; padding:12px 13px; border:1px solid var(--line); border-radius:9px; font:inherit; color:var(--ink); background:white; }
+    input:focus { outline:3px solid #1769aa22; border-color:var(--blue); }
+    .optional { color:var(--muted); font-weight:400; font-size:12px; }
+    .hint { margin:0; color:var(--muted); font-size:12px; line-height:1.4; }
+    fieldset { border:0; padding:0; margin:0; }
+    .choices { display:flex; gap:12px; margin-top:8px; }
+    .choice { flex:1; border:1px solid var(--line); border-radius:9px; padding:12px; display:flex; align-items:center; gap:9px; cursor:pointer; }
+    .choice:has(input:checked) { border-color:var(--blue); background:#eff7ff; }
+    button { grid-column:1 / -1; width:100%; padding:13px 18px; border:0; border-radius:9px; background:var(--blue); color:white; font:inherit; font-weight:700; cursor:pointer; }
+    button:hover { background:#10578f; }
+    button:disabled { opacity:.65; cursor:wait; }
+    .result { display:none; margin-top:24px; border-radius:12px; padding:20px; background:#eef7f1; border:1px solid #cce6d4; }
+    .result.show { display:block; }
+    .result.error { background:#fff2f0; border-color:#f2c7c2; }
+    .result-label { color:var(--muted); font-size:13px; }
+    .amount { margin:4px 0 6px; font-size:36px; font-weight:750; color:#1c6c3a; }
+    .result.error .amount { color:#a12d25; font-size:18px; }
+    .note { margin:8px 0 0; color:var(--muted); font-size:13px; line-height:1.5; }
+    .footnote { border-top:1px solid var(--line); margin-top:25px; padding-top:18px; color:var(--muted); font-size:12px; line-height:1.55; }
+    @media(max-width:600px) { main { margin:18px auto; } .card { padding:23px; } form { grid-template-columns:1fr; } .wide, button { grid-column:auto; } }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card">
+      <div class="eyebrow">Electricity demand model</div>
+      <h1>Next-day demand forecast</h1>
+      <p class="intro">Enter three details to estimate demand with the saved Ridge Regression model.</p>
+      <form id="forecast-form">
+        <div class="field">
+          <label for="forecast-date">Required forecast date</label>
+          <input id="forecast-date" name="forecast_date" type="date" required>
+        </div>
+        <div class="field">
+          <label for="previous-demand">Previous day's demand (MU) <span class="optional">Optional</span></label>
+          <input id="previous-demand" name="previous_day_demand" type="number" min="0" step="any" placeholder="Leave blank to estimate from history">
+          <p class="hint">If left empty, the model estimates it from historical data.</p>
+        </div>
+        <fieldset class="wide">
+          <legend>Is the required forecast date a weekend?</legend>
+          <div class="choices">
+            <label class="choice"><input type="radio" name="is_weekend" value="yes" required> Yes</label>
+            <label class="choice"><input type="radio" name="is_weekend" value="no"> No</label>
+          </div>
+        </fieldset>
+        <button id="submit-button" type="submit">Predict demand</button>
+      </form>
+      <section id="result" class="result" aria-live="polite">
+        <div class="result-label" id="result-date"></div>
+        <div class="amount" id="result-amount"></div>
+        <div class="result-label">Predicted demand</div>
+        <p class="note" id="result-note"></p>
+      </section>
+      <div class="footnote">Other model inputs are estimated from historical averages for the same month and weekday. For a reliable future estimate, use an up-to-date dataset and interpret this result as a forecast, not a guarantee.</div>
+    </section>
+  </main>
+  <script>
+    const form = document.getElementById('forecast-form');
+    const result = document.getElementById('result');
+    const button = document.getElementById('submit-button');
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      result.className = 'result';
+      button.disabled = true;
+      button.textContent = 'Calculatingâ€¦';
+      const weekend = form.querySelector('input[name="is_weekend"]:checked');
+      try {
+        const response = await fetch('/predict', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            forecast_date: document.getElementById('forecast-date').value,
+            previous_day_demand: document.getElementById('previous-demand').value,
+            is_weekend: weekend ? weekend.value : ''
+          })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not calculate the forecast.');
+        document.getElementById('result-date').textContent = `Forecast for ${data.forecast_date}`;
+        document.getElementById('result-amount').textContent = `${Number(data.predicted_demand_mu).toFixed(2)} MU`;
+        let note = `Previous-day demand used: ${Number(data.previous_day_demand_used_mu).toFixed(2)} MU${data.previous_day_demand_was_estimated ? ' (estimated)' : ' (entered)'}. Remaining inputs were estimated from ${data.estimated_inputs.toLowerCase()}.`;
+        if (!data.weekend_matches_calendar) note += ' Your weekend choice differs from the calendar for this date.';
+        document.getElementById('result-note').textContent = note;
+        result.className = 'result show';
+      } catch (error) {
+        document.getElementById('result-date').textContent = 'Forecast not available';
+        document.getElementById('result-amount').textContent = error.message;
+        document.getElementById('result-note').textContent = '';
+        result.className = 'result show error';
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Predict demand';
+      }
+    });
+    // Default the date field to the computer's local date; the user can change it.
+    const now = new Date();
+    const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    document.getElementById('forecast-date').value = localDate;
+  </script>
+</body>
+</html>
+
+
